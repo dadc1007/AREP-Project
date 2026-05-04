@@ -120,6 +120,29 @@ def ingest_tenant_data(tenant_id: str):
     _store_in_pinecone(docs, index_name, tenant_id)
 
 
+def upload_single_file_to_s3(tenant_id: str, filename: str, file_bytes: bytes):
+    """
+    Servicio: Sube un archivo directamente a S3 bajo el prefijo del tenant y luego
+    vuelve a ejecutar la ingesta para mantener Pinecone actualizado.
+    """
+    logger.info(f"Subiendo nuevo archivo {filename} a S3 para {tenant_id}...")
+    s3_client = boto3.client(
+        "s3",
+        aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
+        aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
+        region_name=os.getenv("AWS_REGION"),
+    )
+    bucket_name = os.getenv("S3_BUCKET_NAME")
+
+    file_key = f"{tenant_id}/{filename}"
+    s3_client.put_object(Bucket=bucket_name, Key=file_key, Body=file_bytes)
+
+    logger.info(
+        f"Archivo subido exitosamente. Ejecutando re-ingesta para {tenant_id}..."
+    )
+    ingest_tenant_data(tenant_id)
+
+
 def ingest_all():
     """Ejecuta el proceso de ingesta para todos los tenants"""
     for tenant_id in SUPPORTED_TENANTS:
