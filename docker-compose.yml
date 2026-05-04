@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  api:
+    build: .
+    container_name: rag-fastapi-app
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    volumes:
+      - ./tmp_data:/app/tmp_data
+    restart: always
+
+networks:
+  default:
+    name: rag-network

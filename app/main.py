@@ -1,4 +1,5 @@
 from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from app.tenants import SUPPORTED_TENANTS
@@ -14,6 +15,15 @@ app = FastAPI(
     title="Multitenant RAG API",
     description="Proyecto académico de arquitectura RAG con soporte multitenante.",
     version="1.0.0",
+)
+
+# Configurar CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 

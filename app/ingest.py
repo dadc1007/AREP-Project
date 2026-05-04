@@ -23,7 +23,12 @@ def _clear_pinecone_namespace(pinecone_api_key: str, index_name: str, tenant_id:
         pc = PineconeClient(api_key=pinecone_api_key)
         index = pc.Index(index_name)
         logger.info(f"Limpiando datos antiguos en el namespace: {tenant_id}")
-        index.delete(delete_all=True, namespace=tenant_id)
+        try:
+            index.delete(delete_all=True, namespace=tenant_id)
+        except Exception as e:
+            logger.warning(
+                f"No se pudo limpiar el namespace '{tenant_id}' (puede que no exista todavía): {str(e)}"
+            )
 
 
 def _download_and_load_documents_from_s3(
