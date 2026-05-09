@@ -6,7 +6,8 @@ from langchain_community.document_loaders import TextLoader, PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_pinecone import PineconeVectorStore
-from app.tenants import SUPPORTED_TENANTS
+from app.tenants import get_supported_tenants, get_tenant_config_dict
+from app.database import SessionLocal
 from app.logging_config import setup_logging, get_logger
 
 load_dotenv()
@@ -74,10 +75,17 @@ def _download_and_load_documents_from_s3(
     return documents
 
 
-def _split_documents(documents: list) -> list:
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
+def _split_documents(documents: list, tenant_config: dict) -> list:
+    chunk_size = tenant_config.get("chunk_size", 500)
+    chunk_overlap = tenant_config.get("chunk_overlap", 50)
+
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=chunk_size, chunk_overlap=chunk_overlap
+    )
     docs = text_splitter.split_documents(documents)
-    logger.info(f"Documentos divididos en {len(docs)} chunks.")
+    logger.info(
+        f"Documentos divididos en {len(docs)} chunks (size={chunk_size}, overlap={chunk_overlap})."
+    )
     return docs
 
 
@@ -118,8 +126,14 @@ def ingest_tenant_data(tenant_id: str):
         )
         return
 
+    db = SessionLocal()
+    try:
+        tenant_config = get_tenant_config_dict(db, tenant_id)
+    finally:
+        db.close()
+
     # 3. Dividir en chunks
-    docs = _split_documents(documents)
+    docs = _split_documents(documents, tenant_config)
 
     # 4. Guardar en Pinecone
     _store_in_pinecone(docs, index_name, tenant_id)
@@ -150,7 +164,8 @@ def upload_single_file_to_s3(tenant_id: str, filename: str, file_bytes: bytes):
 
 def ingest_all():
     """Ejecuta el proceso de ingesta para todos los tenants"""
-    for tenant_id in SUPPORTED_TENANTS:
+    supported_tenants = get_supported_tenants()
+    for tenant_id in supported_tenants:
         ingest_tenant_data(tenant_id)
 
 

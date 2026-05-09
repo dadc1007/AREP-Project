@@ -2,10 +2,11 @@ from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from app.tenants import SUPPORTED_TENANTS
+from app.tenants import get_supported_tenants, init_db
 from app.rag import run_rag_pipeline
 from app.ingest import upload_single_file_to_s3
 from app.logging_config import setup_logging, get_logger
+from app.metrics_service import check_quota
 
 # Configurar logging
 setup_logging()
@@ -27,6 +28,12 @@ app.add_middleware(
 )
 
 
+@app.on_event("startup")
+def startup_event():
+    logger.info("Inicializando base de datos...")
+    init_db()
+
+
 class AskRequest(BaseModel):
     question: str
     tenant_id: str
@@ -37,7 +44,7 @@ def get_tenants():
     """
     Retorna la lista de tenants soportados en el sistema.
     """
-    return {"tenants": SUPPORTED_TENANTS}
+    return {"tenants": get_supported_tenants()}
 
 
 @app.post("/tenants/{tenant_id}/upload")
@@ -46,10 +53,11 @@ async def upload_document(tenant_id: str, file: UploadFile = File(...)):
     Endpoint para subir un archivo para un tenant específico.
     Delega la responsabilidad al servicio de ingesta (S3 + Pinecone).
     """
-    if tenant_id not in SUPPORTED_TENANTS:
+    supported = get_supported_tenants()
+    if tenant_id not in supported:
         raise HTTPException(
             status_code=400,
-            detail=f"Tenant '{tenant_id}' no válido. Opciones: {SUPPORTED_TENANTS}",
+            detail=f"Tenant '{tenant_id}' no válido. Opciones: {supported}",
         )
 
     if not (file.filename.endswith(".txt") or file.filename.endswith(".pdf")):
@@ -78,13 +86,17 @@ async def ask_question(request: AskRequest):
     Delega la responsabilidad al servicio run_rag_pipeline.
     """
     # 1. Validar que el tenant exista
-    if request.tenant_id not in SUPPORTED_TENANTS:
+    supported = get_supported_tenants()
+    if request.tenant_id not in supported:
         raise HTTPException(
             status_code=400,
-            detail=f"Tenant '{request.tenant_id}' no válido. Opciones: {SUPPORTED_TENANTS}",
+            detail=f"Tenant '{request.tenant_id}' no válido. Opciones: {supported}",
         )
 
     try:
+        # Verificar cuota antes de procesar
+        check_quota(request.tenant_id)
+
         result = run_rag_pipeline(
             tenant_id=request.tenant_id, question=request.question
         )
@@ -95,6 +107,9 @@ async def ask_question(request: AskRequest):
             "answer": result["answer"],
             "sources": result["sources"],
         }
+    except ValueError as ve:
+        logger.warning(f"Cuota excedida: {str(ve)}")
+        raise HTTPException(status_code=429, detail=str(ve))
     except Exception as e:
         logger.error(f"Error procesando la solicitud: {str(e)}", exc_info=True)
         raise HTTPException(
