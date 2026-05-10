@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from app.rag import run_rag_pipeline
 from app.ingest import upload_single_file_to_s3
 from app.logging_config import setup_logging, get_logger
+from app.metrics_service import get_tenant_metrics
 from app.metrics_service import check_quota
 
 # Configurar logging
@@ -76,6 +77,18 @@ def get_tenant_config(tenant_id: str, db: Session = Depends(get_db)):
 
     config = get_tenant_config_dict(db, tenant_id)
     return config
+
+
+@app.get("/tenants/{tenant_id}/metrics")
+def get_tenant_metrics_endpoint(tenant_id: str, db: Session = Depends(get_db)):
+    """
+    Obtiene las métricas de consumo (tokens y peticiones) actuales de un tenant.
+    """
+    supported = get_supported_tenants(db)
+    if tenant_id not in supported:
+        raise HTTPException(status_code=400, detail=f"Tenant '{tenant_id}' no válido.")
+        
+    return get_tenant_metrics(tenant_id)
 
 
 @app.put("/tenants/{tenant_id}/config")

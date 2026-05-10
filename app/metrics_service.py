@@ -69,3 +69,28 @@ def add_usage(tenant_id: str, tokens: int):
         db.rollback()
     finally:
         db.close()
+
+
+def get_tenant_metrics(tenant_id: str) -> dict:
+    """
+    Obtiene las métricas actuales de consumo (tokens y peticiones) de un inquilino.
+    
+    Args:
+        tenant_id (str): ID del inquilino a consultar.
+        
+    Returns:
+        dict: Diccionario con 'tokens_used' y 'queries_count'.
+    """
+    db = SessionLocal()
+    try:
+        metrics = db.query(TenantMetrics).filter(TenantMetrics.tenant_id == tenant_id).first()
+        if not metrics:
+            return {"tenant_id": tenant_id, "tokens_used": 0, "queries_count": 0}
+            
+        return {
+            "tenant_id": tenant_id,
+            "tokens_used": metrics.tokens_used,
+            "queries_count": metrics.queries_count
+        }
+    finally:
+        db.close()
