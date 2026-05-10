@@ -40,10 +40,13 @@ DEFAULT_TENANTS = {
 
 
 def init_db():
+    """
+    Crea las tablas en la base de datos si no existen y popula los datos
+    de los inquilinos por defecto (tenant_a, tenant_b, tenant_c).
+    """
     Base.metadata.create_all(bind=engine)
     db = SessionLocal()
     try:
-        # Verificar si ya existen
         if db.query(TenantConfig).first() is None:
             logger.info("Poblando base de datos con tenants por defecto...")
             for t_id, t_data in DEFAULT_TENANTS.items():
@@ -71,7 +74,15 @@ def init_db():
 
 
 def get_supported_tenants(db: Session = None):
-    # Permite inyectar db, si no crea una sesion nueva rápida
+    """
+    Consulta la base de datos para obtener la lista de todos los IDs de inquilinos registrados.
+
+    Args:
+        db (Session, optional): Sesión de base de datos existente. Si no se provee, se crea una nueva.
+
+    Returns:
+        list: Lista de strings con los identificadores de los tenants.
+    """
     close_db = False
     if db is None:
         db = SessionLocal()
@@ -86,6 +97,16 @@ def get_supported_tenants(db: Session = None):
 
 
 def get_tenant_config_dict(db: Session, tenant_id: str):
+    """
+    Obtiene la configuración completa de un inquilino y la retorna como un diccionario plano.
+
+    Args:
+        db (Session): Sesión de la base de datos.
+        tenant_id (str): ID del inquilino.
+
+    Returns:
+        dict: Diccionario con campos como chunk_size, use_hyde, system_prompt, etc.
+    """
     config = db.query(TenantConfig).filter(TenantConfig.tenant_id == tenant_id).first()
     if not config:
         return {}
@@ -100,3 +121,32 @@ def get_tenant_config_dict(db: Session, tenant_id: str):
         "system_prompt": config.system_prompt,
         "max_tokens": config.max_tokens,
     }
+
+
+def update_tenant_config(db: Session, tenant_id: str, update_data: dict) -> dict:
+    """
+    Actualiza los parámetros de configuración de un inquilino de forma parcial.
+
+    Args:
+        db (Session): Sesión de la base de datos.
+        tenant_id (str): ID del inquilino a actualizar.
+        update_data (dict): Diccionario con los campos y nuevos valores.
+
+    Returns:
+        dict: El diccionario de configuración actualizado.
+    """
+    config = db.query(TenantConfig).filter(TenantConfig.tenant_id == tenant_id).first()
+    if not config:
+        raise ValueError(f"Tenant '{tenant_id}' no encontrado.")
+
+    # Filtrar solo los valores que no son None
+    update_fields = {k: v for k, v in update_data.items() if v is not None}
+
+    for key, value in update_fields.items():
+        if hasattr(config, key):
+            setattr(config, key, value)
+
+    db.commit()
+    db.refresh(config)
+
+    return get_tenant_config_dict(db, tenant_id)

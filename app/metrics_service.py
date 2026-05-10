@@ -7,8 +7,14 @@ logger = get_logger(__name__)
 
 def check_quota(tenant_id: str):
     """
-    Verifica si el tenant ha excedido su cuota de tokens consultando PostgreSQL.
-    Lanza una excepción si se excede el límite.
+    Verifica si un inquilino ha alcanzado su límite de tokens permitido.
+    Consulta la base de datos PostgreSQL para comparar 'tokens_used' contra 'max_tokens'.
+    
+    Args:
+        tenant_id (str): ID del inquilino a validar.
+        
+    Raises:
+        ValueError: Si el tenant no existe o si ha excedido su cuota.
     """
     db = SessionLocal()
     try:
@@ -35,7 +41,12 @@ def check_quota(tenant_id: str):
 
 def add_usage(tenant_id: str, tokens: int):
     """
-    Registra el uso de tokens y suma una petición al contador en PostgreSQL.
+    Registra el consumo de tokens y aumenta el contador de consultas para un inquilino.
+    La actualización se realiza de forma atómica en la base de datos PostgreSQL.
+    
+    Args:
+        tenant_id (str): ID del inquilino.
+        tokens (int): Cantidad de tokens a sumar al acumulado.
     """
     db = SessionLocal()
     try:

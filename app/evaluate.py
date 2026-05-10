@@ -15,6 +15,12 @@ DATASET_PATH = "app/evaluation_dataset.json"
 
 
 def load_dataset():
+    """
+    Carga el conjunto de datos de evaluación desde un archivo JSON.
+
+    Returns:
+        list: Lista de objetos de prueba con pregunta y respuesta esperada.
+    """
     with open(DATASET_PATH, "r", encoding="utf-8") as f:
         return json.load(f)
 
@@ -23,9 +29,19 @@ def evaluate_response(
     question: str, expected_answer: str, generated_answer: str, context_sources: list
 ) -> dict:
     """
-    Usa LLM-as-a-judge para evaluar la respuesta generada.
+    Usa el enfoque 'LLM-as-a-judge' para evaluar la calidad de una respuesta generada.
+    Califica la Relevancia y la Fidelidad (Faithfulness) en una escala de 1 a 5.
+
+    Args:
+        question (str): La pregunta realizada.
+        expected_answer (str): La respuesta ideal (Ground Truth).
+        generated_answer (str): La respuesta producida por el sistema RAG.
+        context_sources (list): Lista de fuentes utilizadas para la generación.
+
+    Returns:
+        dict: Un objeto con los puntajes y feedback del evaluador.
     """
-    llm = get_llm(temperature=0.0)  # Evaluador frío
+    llm = get_llm(temperature=0.0)
 
     prompt = PromptTemplate.from_template(
         """Eres un evaluador imparcial. Tu tarea es evaluar la respuesta de un sistema RAG en dos métricas:
@@ -67,11 +83,15 @@ Debes responder ÚNICAMENTE con un JSON válido usando este formato:
 
 
 def run_evaluation():
+    """
+    Ejecuta el proceso de evaluación completo para todos los inquilinos soportados.
+    Itera sobre el dataset, genera respuestas y las califica, guardando los resultados
+    consolidados en un archivo JSON para su posterior análisis.
+    """
     logger.info("Iniciando Marco de Evaluación Multimodelo...")
-    init_db()  # Asegurarse de que existan los tenants base en DB
+    init_db()
     dataset = load_dataset()
     results = {}
-
     supported_tenants = get_supported_tenants()
 
     for tenant_id in supported_tenants:
@@ -100,7 +120,6 @@ def run_evaluation():
             end_time = time.time()
 
             elapsed_ms = (end_time - start_time) * 1000
-
             eval_metrics = evaluate_response(
                 question, expected, generated_answer, sources
             )
@@ -123,6 +142,7 @@ def run_evaluation():
 
         # Calcular promedios
         q_count = tenant_results["queries"]
+
         if q_count > 0:
             tenant_results["avg_relevance"] = round(
                 tenant_results["total_relevance"] / q_count, 2
@@ -135,6 +155,7 @@ def run_evaluation():
             )
 
         results[tenant_id] = tenant_results
+
         logger.info(
             f"Resultados {tenant_id}: Relevancia Media={tenant_results.get('avg_relevance')}, Fidelidad Media={tenant_results.get('avg_faithfulness')}, Tiempo Medio={tenant_results.get('avg_time_ms')}ms"
         )

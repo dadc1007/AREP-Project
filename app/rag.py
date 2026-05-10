@@ -19,6 +19,13 @@ _cross_encoder = None
 
 
 def get_cross_encoder():
+    """
+    Inicializa y retorna un modelo CrossEncoder local de forma perezosa (lazy loading).
+    Se utiliza para el proceso de Reranking de documentos recuperados.
+
+    Returns:
+        CrossEncoder: El modelo cargado en memoria.
+    """
     global _cross_encoder
     if _cross_encoder is None:
         from sentence_transformers import CrossEncoder
@@ -29,6 +36,15 @@ def get_cross_encoder():
 
 
 def get_vector_store(tenant_id: str):
+    """
+    Configura y retorna la conexión al almacén de vectores de Pinecone para un inquilino específico.
+
+    Args:
+        tenant_id (str): Identificador único del inquilino (usado como namespace).
+
+    Returns:
+        PineconeVectorStore: Instancia de conexión al índice de Pinecone.
+    """
     index_name = os.getenv("PINECONE_INDEX_NAME")
     embeddings = get_embeddings()
     return PineconeVectorStore(
@@ -37,6 +53,15 @@ def get_vector_store(tenant_id: str):
 
 
 def get_llm(temperature: float = 0.0):
+    """
+    Configura y retorna el cliente de ChatOpenAI (GPT-4o-mini).
+
+    Args:
+        temperature (float): Nivel de creatividad/aleatoriedad del modelo (0.0 para respuestas precisas).
+
+    Returns:
+        ChatOpenAI: Cliente de OpenAI vinculado con formato de respuesta JSON.
+    """
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         raise ValueError(
@@ -48,7 +73,16 @@ def get_llm(temperature: float = 0.0):
 
 
 def _generate_hyde_query(question: str, temperature: float) -> str:
-    """Genera una respuesta hipotética para mejorar la recuperación (HyDE)."""
+    """
+    Genera una respuesta hipotética (HyDE) para mejorar la calidad de la recuperación semántica.
+
+    Args:
+        question (str): Pregunta original del usuario.
+        temperature (float): Temperatura para la generación del LLM.
+
+    Returns:
+        tuple[str, int]: Consulta expandida y cantidad de tokens utilizados.
+    """
     logger.info("Generando consulta HyDE...")
     llm = get_llm(temperature=temperature)
     prompt = PromptTemplate.from_template(
@@ -72,15 +106,38 @@ def _generate_hyde_query(question: str, temperature: float) -> str:
 
 
 def _retrieve_documents(tenant_id: str, search_query: str, k: int = 3) -> list:
+    """
+    Realiza una búsqueda de similitud en el almacén de vectores de Pinecone.
+
+    Args:
+        tenant_id (str): Namespace del inquilino a consultar.
+        search_query (str): Texto a buscar (pregunta o respuesta HyDE).
+        k (int): Cantidad de documentos a recuperar.
+
+    Returns:
+        list: Lista de fragmentos de documentos encontrados.
+    """
     vector_store = get_vector_store(tenant_id)
     return vector_store.similarity_search(search_query, k=k)
 
 
 def _rerank_documents(question: str, docs: list, top_k: int = 3) -> list:
-    """Reordena los documentos recuperados utilizando un CrossEncoder local."""
+    """
+    Reordena los documentos recuperados utilizando un modelo CrossEncoder local para mayor precisión.
+
+    Args:
+        question (str): Pregunta original del usuario.
+        docs (list): Lista de documentos recuperados inicialmente.
+        top_k (int): Cantidad de documentos finales a retornar después del reranking.
+
+    Returns:
+        list: Los top_k documentos más relevantes según el CrossEncoder.
+    """
     if not docs:
         return docs
+
     logger.info("Aplicando Reranking...")
+
     cross_encoder = get_cross_encoder()
     pairs = [[question, doc.page_content] for doc in docs]
     scores = cross_encoder.predict(pairs)
@@ -96,7 +153,18 @@ def _rerank_documents(question: str, docs: list, top_k: int = 3) -> list:
 def _build_context_and_log(
     docs: list, tenant_id: str, question: str
 ) -> tuple[str, set]:
-    """Construye el texto del contexto usando 'Lost in the middle' y registra la ejecución."""
+    """
+    Construye el bloque de texto de contexto y aplica la estrategia 'Lost in the middle'.
+    También extrae los nombres de las fuentes únicas consultadas.
+
+    Args:
+        docs (list): Documentos finales ordenados por relevancia.
+        tenant_id (str): ID del inquilino.
+        question (str): Pregunta del usuario.
+
+    Returns:
+        tuple[str, set]: El texto consolidado del contexto y un conjunto de fuentes únicas.
+    """
     all_retrieved_sources = set()
 
     # Extraer sources
@@ -105,7 +173,6 @@ def _build_context_and_log(
         all_retrieved_sources.add(source_name)
 
     # Ordenamiento estratégico: Los más importantes al inicio y al final
-    # Supongamos que docs ya viene ordenado por relevancia (de mayor a menor)
     reordered_docs = []
     if len(docs) > 0:
         final_list = []
@@ -136,7 +203,17 @@ def _build_context_and_log(
 
 
 def _generate_prompt(context: str, question: str, tenant_config: dict) -> str:
-    """Genera el texto final del prompt leyendo la configuración del tenant."""
+    """
+    Genera el prompt final combinando el system_prompt del inquilino, el contexto y la pregunta.
+
+    Args:
+        context (str): Información recuperada de la base de datos de vectores.
+        question (str): Pregunta actual.
+        tenant_config (dict): Diccionario con la configuración del inquilino.
+
+    Returns:
+        str: El prompt formateado listo para ser enviado al LLM.
+    """
     system_prompt = tenant_config.get(
         "system_prompt",
         "Eres un asistente interno de la empresa. Usa la siguiente información de contexto corporativo para responder la pregunta del usuario.",
@@ -163,6 +240,16 @@ Instrucciones estrictas:
 
 
 def _parse_llm_response(response, all_retrieved_sources: set) -> dict:
+    """
+    Procesa la respuesta JSON del LLM y valida que las fuentes citadas existan en la recuperación.
+
+    Args:
+        response: Objeto de respuesta del LLM (OpenAI).
+        all_retrieved_sources (set): Conjunto de archivos que realmente se recuperaron.
+
+    Returns:
+        dict: Diccionario con la respuesta final y la lista de fuentes validadas.
+    """
     try:
         response_data = json.loads(response.content)
         final_answer = response_data.get("answer", "No se pudo generar respuesta.")
@@ -176,6 +263,17 @@ def _parse_llm_response(response, all_retrieved_sources: set) -> dict:
 
 
 def run_rag_pipeline(tenant_id: str, question: str) -> dict:
+    """
+    Orquestador principal del pipeline RAG multitenante.
+    Maneja cuotas, HyDE, Recuperación, Reranking, Generación y Registro de métricas.
+
+    Args:
+        tenant_id (str): ID del inquilino que realiza la consulta.
+        question (str): Pregunta del usuario.
+
+    Returns:
+        dict: Respuesta final de la IA y fuentes citadas.
+    """
     db = SessionLocal()
     try:
         tenant_config = get_tenant_config_dict(db, tenant_id)

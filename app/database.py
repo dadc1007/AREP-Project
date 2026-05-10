@@ -6,7 +6,6 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Leer credenciales desde el entorno
 POSTGRES_USER = os.getenv("POSTGRES_USER", "rag_admin")
 POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "rag_secret")
 POSTGRES_DB = os.getenv("POSTGRES_DB", "rag_multitenant")
@@ -17,11 +16,17 @@ SQLALCHEMY_DATABASE_URL = f"postgresql://{POSTGRES_USER}:{POSTGRES_PASSWORD}@{PO
 
 engine = create_engine(SQLALCHEMY_DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
 Base = declarative_base()
 
 
 def get_db():
+    """
+    Generador de sesiones de base de datos para ser utilizado como dependencia en FastAPI.
+    Asegura que la conexión se cierre después de completar la petición.
+
+    Yields:
+        Session: Sesión de SQLAlchemy activa.
+    """
     db = SessionLocal()
     try:
         yield db

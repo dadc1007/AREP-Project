@@ -15,11 +15,26 @@ logger = get_logger(__name__)
 
 
 def get_embeddings():
-    """Mantiene acceso público porque app/rag.py lo importa"""
+    """
+    Carga el modelo de embeddings 'all-MiniLM-L6-v2' de HuggingFace.
+    Se utiliza para convertir texto en vectores densos compatibles con Pinecone.
+    
+    Returns:
+        HuggingFaceEmbeddings: Instancia del modelo de embeddings.
+    """
     return HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
 
 def _clear_pinecone_namespace(pinecone_api_key: str, index_name: str, tenant_id: str):
+    """
+    Elimina todos los vectores existentes en un namespace específico de Pinecone.
+    Esto asegura que la nueva ingesta no duplique información.
+    
+    Args:
+        pinecone_api_key (str): Llave de API de Pinecone.
+        index_name (str): Nombre del índice.
+        tenant_id (str): El namespace a limpiar.
+    """
     if pinecone_api_key and index_name:
         pc = PineconeClient(api_key=pinecone_api_key)
         index = pc.Index(index_name)
@@ -35,6 +50,17 @@ def _clear_pinecone_namespace(pinecone_api_key: str, index_name: str, tenant_id:
 def _download_and_load_documents_from_s3(
     s3_client, bucket_name: str, tenant_id: str
 ) -> list:
+    """
+    Descarga archivos (.txt, .pdf) desde S3 y los carga como objetos Document.
+    
+    Args:
+        s3_client: Cliente de boto3 configurado.
+        bucket_name (str): Nombre del bucket S3.
+        tenant_id (str): Prefijo/Carpeta del inquilino en S3.
+        
+    Returns:
+        list: Lista de documentos cargados.
+    """
     prefix = f"{tenant_id}/"
     response = s3_client.list_objects_v2(Bucket=bucket_name, Prefix=prefix)
 
@@ -76,6 +102,16 @@ def _download_and_load_documents_from_s3(
 
 
 def _split_documents(documents: list, tenant_config: dict) -> list:
+    """
+    Divide los documentos cargados en fragmentos (chunks) utilizando la configuración del inquilino.
+    
+    Args:
+        documents (list): Lista de documentos originales.
+        tenant_config (dict): Parámetros de chunk_size y chunk_overlap.
+        
+    Returns:
+        list: Lista de fragmentos listos para ser vectorizados.
+    """
     chunk_size = tenant_config.get("chunk_size", 500)
     chunk_overlap = tenant_config.get("chunk_overlap", 50)
 
@@ -90,6 +126,15 @@ def _split_documents(documents: list, tenant_config: dict) -> list:
 
 
 def _store_in_pinecone(docs: list, index_name: str, tenant_id: str):
+    """
+    Vectoriza los fragmentos y los almacena en un namespace específico de Pinecone.
+    Primero limpia el namespace para evitar duplicados.
+    
+    Args:
+        docs (list): Fragmentos a almacenar.
+        index_name (str): Nombre del índice de Pinecone.
+        tenant_id (str): ID del inquilino (usado como namespace).
+    """
     embeddings = get_embeddings()
     PineconeVectorStore.from_documents(
         documents=docs, embedding=embeddings, index_name=index_name, namespace=tenant_id
@@ -100,6 +145,17 @@ def _store_in_pinecone(docs: list, index_name: str, tenant_id: str):
 
 
 def ingest_tenant_data(tenant_id: str):
+    """
+    Ejecuta el flujo completo de ingesta para un inquilino específico:
+    1. Limpia Pinecone.
+    2. Descarga de S3.
+    3. Obtiene configuración de la DB.
+    4. Fragmenta (Split).
+    5. Indexa en Pinecone.
+    
+    Args:
+        tenant_id (str): ID del inquilino a procesar.
+    """
     """
     Lee los documentos de un tenant desde S3 y los guarda en Pinecone bajo su namespace.
     """
@@ -141,6 +197,14 @@ def ingest_tenant_data(tenant_id: str):
 
 def upload_single_file_to_s3(tenant_id: str, filename: str, file_bytes: bytes):
     """
+    Sube un archivo a S3 y dispara inmediatamente la ingesta para ese inquilino.
+    
+    Args:
+        tenant_id (str): ID del inquilino.
+        filename (str): Nombre del archivo.
+        file_bytes (bytes): Contenido del archivo.
+    """
+    """
     Servicio: Sube un archivo directamente a S3 bajo el prefijo del tenant y luego
     vuelve a ejecutar la ingesta para mantener Pinecone actualizado.
     """
@@ -163,7 +227,10 @@ def upload_single_file_to_s3(tenant_id: str, filename: str, file_bytes: bytes):
 
 
 def ingest_all():
-    """Ejecuta el proceso de ingesta para todos los tenants"""
+    """
+    Ejecuta el proceso de ingesta de forma masiva para todos los inquilinos
+    registrados en la base de datos.
+    """
     supported_tenants = get_supported_tenants()
     for tenant_id in supported_tenants:
         ingest_tenant_data(tenant_id)
