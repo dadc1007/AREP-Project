@@ -1,28 +1,16 @@
 import json
-import os
 import time
 from dotenv import load_dotenv
 from langchain.prompts import PromptTemplate
 from app.tenants import get_supported_tenants, init_db
 from app.rag import run_rag_pipeline, get_llm
 from app.logging_config import setup_logging, get_logger
+from app.database import SessionLocal
+from app.models import EvaluationResult
 
 setup_logging()
 logger = get_logger(__name__)
 load_dotenv()
-
-DATASET_PATH = "app/evaluation_dataset.json"
-
-
-def load_dataset():
-    """
-    Carga el conjunto de datos de evaluación desde un archivo JSON.
-
-    Returns:
-        list: Lista de objetos de prueba con pregunta y respuesta esperada.
-    """
-    with open(DATASET_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)
 
 
 def evaluate_response(
@@ -82,17 +70,24 @@ Debes responder ÚNICAMENTE con un JSON válido usando este formato:
         }
 
 
-def run_evaluation():
+def run_evaluation(dataset: list) -> dict:
     """
-    Ejecuta el proceso de evaluación completo para todos los inquilinos soportados.
-    Itera sobre el dataset, genera respuestas y las califica, guardando los resultados
-    consolidados en un archivo JSON para su posterior análisis.
+    Ejecuta el proceso de evaluación completo para todos los inquilinos soportados,
+    utilizando un dataset proporcionado dinámicamente.
+    Guarda los resultados consolidados en la base de datos PostgreSQL.
+
+    Args:
+        dataset (list): Lista de diccionarios con 'question' y 'expected_answer'.
+
+    Returns:
+        dict: Resultados de la evaluación.
     """
-    logger.info("Iniciando Marco de Evaluación Multimodelo...")
+    logger.info("Iniciando Marco de Evaluación Dinámico...")
     init_db()
-    dataset = load_dataset()
     results = {}
     supported_tenants = get_supported_tenants()
+
+    db = SessionLocal()
 
     for tenant_id in supported_tenants:
         logger.info(f"--- Evaluando perfil: {tenant_id} ---")
@@ -160,14 +155,21 @@ def run_evaluation():
             f"Resultados {tenant_id}: Relevancia Media={tenant_results.get('avg_relevance')}, Fidelidad Media={tenant_results.get('avg_faithfulness')}, Tiempo Medio={tenant_results.get('avg_time_ms')}ms"
         )
 
-    os.makedirs("tmp_data", exist_ok=True)
-    with open("tmp_data/evaluation_results.json", "w", encoding="utf-8") as f:
-        json.dump(results, f, indent=4, ensure_ascii=False)
+        # Guardar en PostgreSQL
+        try:
+            db_result = EvaluationResult(
+                tenant_id=tenant_id,
+                avg_relevance=tenant_results.get("avg_relevance", 0.0),
+                avg_faithfulness=tenant_results.get("avg_faithfulness", 0.0),
+                avg_time_ms=tenant_results.get("avg_time_ms", 0.0),
+            )
+            db.add(db_result)
+            db.commit()
+            logger.info(f"Resultados guardados en BD para {tenant_id}")
+        except Exception as e:
+            logger.error(f"Error guardando resultados en BD para {tenant_id}: {e}")
+            db.rollback()
 
-    logger.info(
-        "Evaluación completada. Resultados guardados en tmp_data/evaluation_results.json"
-    )
-
-
-if __name__ == "__main__":
-    run_evaluation()
+    db.close()
+    logger.info("Evaluación dinámica completada.")
+    return results
