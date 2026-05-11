@@ -7,7 +7,7 @@ from app.tenants import (
     update_tenant_config,
 )
 from app.rag import run_rag_pipeline
-from app.ingest import upload_single_file_to_s3
+from app.ingest import upload_single_file_to_s3, ingest_tenant_data
 from app.logging_config import get_logger
 from app.metrics_service import get_tenant_metrics, check_quota
 from app.evaluate import run_evaluation
@@ -51,10 +51,22 @@ def update_tenant_config_endpoint(
     if tenant_id not in supported:
         raise HTTPException(status_code=400, detail=f"Tenant '{tenant_id}' no válido.")
     try:
+        old_config = get_tenant_config_dict(db, tenant_id)
+
         updated_config = update_tenant_config(
             db, tenant_id, config_update.model_dump(exclude_unset=True)
         )
-        return {"message": "Configuración actualizada", "config": updated_config}
+
+        message = "Configuración actualizada"
+
+        # Verificar si cambiaron los parámetros estructurales
+        if old_config.get("chunk_size") != updated_config.get(
+            "chunk_size"
+        ) or old_config.get("chunk_overlap") != updated_config.get("chunk_overlap"):
+            ingest_tenant_data(tenant_id)
+            message += ". Los vectores han sido re-procesados exitosamente."
+
+        return {"message": message, "config": updated_config}
     except Exception as e:
         logger.error(f"Error actualizando configuración de {tenant_id}: {str(e)}")
         raise HTTPException(
